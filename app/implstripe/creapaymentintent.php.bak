@@ -1,0 +1,81 @@
+
+<?php
+
+require_once '../vendor/autoload.php';
+require_once '../../secrets.php';
+require_once('../lib/nusoap.php');
+require_once('../lib/Constantes.php');
+session_start();
+include "peticionescita.php";
+
+\Stripe\Stripe::setApiKey($stripeSecretKey);
+
+function calculateOrderAmount(int $idcita): int {
+    $total=0;
+    $petcit=new PeticionesCita();
+    $validaDatosJson =$petcit->getCita($idcita);
+  
+    if(isset($validaDatosJson))
+    {  $cita=json_decode($validaDatosJson);
+   // var_dump($cita);
+        if(isset($cita->estudios)){
+            foreach ($cita->estudios as $estudio) {
+               // echo "<br>".$estudio->importe;
+                $total+=$estudio->importe;
+            }
+        }
+    }
+    return $total;
+}
+
+
+
+try {
+    $jsonStr = file_get_contents('php://input');
+    $jsonObj = json_decode($jsonStr);
+ //   var_dump($jsonObj);
+  //  $idcita=$jsonObj->idcita;
+   // $idcita=42945;
+    $petcit=new PeticionesCita();
+   
+    //reviso si ya había guardado la cita
+    if(isset($_SESSION["citaapagar"])){
+        //ya existe y no la guarado pero tendría que actualizarla
+     
+        $idcita=$_SESSION["citaapagar"];
+    }else{
+        //guardo la cita y la recupero
+        $idcita=$petcit->guardarCita($jsonObj);
+    //    $idcita=0;
+       if($idcita==0)
+         throw new Exception("Hubo un error al agendar la cita");
+       // $petcit->guardarCita($jsonObj);
+        $_SESSION["citaapagar"]=$idcita;
+    }
+    
+   //devuelve el monto total
+    $monto=calculateOrderAmount($idcita);
+   // echo $monto;
+   // die();
+    // Create a PaymentIntent with amount and currency
+    $paymentIntent = \Stripe\PaymentIntent::create([
+        'amount' => $monto,
+        'currency' => 'mxn',
+        'automatic_payment_methods' => [
+            'enabled' => true,
+        ],
+    ]);
+
+    $output = [
+        'clientSecret' => $paymentIntent->client_secret,
+    ];
+    //guardo el client secret
+    $petcit=new PeticionesCita();
+    
+    $validaDatosJson =$petcit->actualizaClientSecret($idcita,$paymentIntent->client_secret);
+    
+    echo json_encode($output);
+} catch (Error $e) {
+    http_response_code(500);
+    echo json_encode(['error' => $e->getMessage()]);
+}
